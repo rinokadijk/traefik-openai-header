@@ -1,10 +1,10 @@
 displayName: OpenAI Headers
-summary: 'This plugin provides a middleware to add headers from the openai model'
+summary: 'This plugin provides a middleware to add headers from the openai request body'
 type: middleware
 import: github.com/rinokadijk/traefik-openai-header
 
 testData:
   requestUriPrefix: /v1/chat/completions
-  mappings:
+  requestFields:
     model: X-OpenAI-Model
     user: X-OpenAI-User
