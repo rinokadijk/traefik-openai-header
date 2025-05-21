@@ -1,0 +1,34 @@
+# For file adjustments, refer to the official golang-ci docs
+# https://golangci-lint.run/usage/configuration/#output-configuration
+
+version: "2"
+
+run:
+  timeout: 5m
+  modules-download-mode: readonly
+  issues-exit-code: 2
+
+output:
+  show-stats: true
+  formats:
+    text:
+      colors: true
+  sort-order:
+    - file
+    - linter
+
+linters:
+  enable:
+    - revive # Fast, configurable, extensible, flexible, and beautiful linter for Go. Drop-in replacement of golint.
+    - errcheck # Errcheck is a program for checking for unchecked errors in Go code. These unchecked errors can be critical bugs in some cases.
+    - govet # Vet examines Go source code and reports suspicious constructs. It is roughly the same as 'go vet' and uses its passes.
+    - ineffassign # Detects when assignments to existing variables are not used.
+    - unused # Checks Go code for unused constants, variables, functions and types.
+    - dupl # Tool for code clone detection.
+    - bodyclose # Checks whether HTTP response body is closed successfully.
+    - exhaustive # Check exhaustiveness of enum switch statements.
+    - errorlint
+
+issues:
+  fix: true
+  max-issues-per-linter: 1000

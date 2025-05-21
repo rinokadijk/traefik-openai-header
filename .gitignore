@@ -1,0 +1,8 @@
+# Ignores for custom directories
+
+# IntelliJ
+out/
+.idea/
+ # Mac
+.DS_Store
+dist/
