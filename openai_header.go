@@ -8,13 +8,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
+	"regexp"
 )
 
 // Config the plugin configuration.
 type Config struct {
-	RequestFields    map[string]interface{} `json:"requestFields"`
-	RequestURIPrefix string                 `json:"requestUriPrefix"`
+	RequestFields   map[string]interface{} `json:"requestFields"`
+	RequestURIRegex string                 `json:"requestUriRegex"`
 }
 
 // CreateConfig creates the default plugin configuration.
@@ -29,17 +29,17 @@ func CreateConfig() *Config {
 	fields["tool_choice"] = "X-OpenAI-Tool-Choice"
 	fields["stream"] = "X-OpenAI-Stream"
 	return &Config{
-		RequestFields:    fields,
-		RequestURIPrefix: "/v1/chat/completions",
+		RequestFields:   fields,
+		RequestURIRegex: "/v1/chat/completions",
 	}
 }
 
 // Handler contains the config for the plugin
 type Handler struct {
-	name          string
-	next          http.Handler
-	requestFields map[string]interface{}
-	requestURI    string
+	name            string
+	next            http.Handler
+	requestFields   map[string]interface{}
+	requestURIRegex string
 }
 
 // New Creates a new HTTP Handler to translate the openai model into headers
@@ -49,10 +49,10 @@ func New(_ context.Context, next http.Handler, config *Config, name string) (htt
 	}
 
 	return &Handler{
-		name:          name,
-		requestFields: config.RequestFields,
-		requestURI:    config.RequestURIPrefix,
-		next:          next,
+		name:            name,
+		requestFields:   config.RequestFields,
+		requestURIRegex: config.RequestURIRegex,
+		next:            next,
 	}, nil
 }
 
@@ -113,7 +113,13 @@ type chatCompletionRequest struct {
 }
 
 func (e *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if strings.HasPrefix(r.RequestURI, e.requestURI) && r.Method == "POST" {
+	matched, err := regexp.MatchString(e.requestURIRegex, r.RequestURI)
+
+	if err != nil {
+		fmt.Println("Error while matching RequestURI", err.Error())
+	}
+
+	if matched && r.Method == "POST" {
 		var body bytes.Buffer
 		tee := io.TeeReader(r.Body, &body)
 

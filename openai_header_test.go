@@ -111,6 +111,7 @@ func TestOpenAiModelHeader_ServeHTTP(t *testing.T) {
 
 			recorder := httptest.NewRecorder()
 			e.ServeHTTP(recorder, httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(tt.input)))
+			e.ServeHTTP(recorder, httptest.NewRequest("POST", "/v1/completions", strings.NewReader(tt.input)))
 
 			if recorder.Code != http.StatusOK && !tt.error {
 				t.Errorf("expected status code 200 but got %d", recorder.Code)
@@ -129,6 +130,7 @@ func (s String) AsReader() io.Reader {
 
 func newConfig() *Config {
 	c := CreateConfig()
+	c.RequestURIRegex = "/v1.*/completions"
 	return c
 }
 
