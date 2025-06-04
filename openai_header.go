@@ -94,7 +94,7 @@ type chatCompletionRequest struct {
 	Messages            json.RawMessage   `json:"messages,omitempty"`
 	Audio               audio             `json:"audio,omitempty"`
 	FrequencyPenalty    *float32          `json:"frequency_penalty,omitempty"`
-	MaxCompletionTokens string            `json:"max_completion_tokens,omitempty"`
+	MaxCompletionTokens *float32          `json:"max_completion_tokens,omitempty"`
 	Metadata            map[string]string `json:"metadata,omitempty"`
 	Modalities          []string          `json:"modalities,omitempty"`
 	N                   *int              `json:"n,omitempty"`
@@ -151,8 +151,8 @@ func (e *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				r.Header.Set(fmt.Sprintf("%v", e.requestFields["temperature"]), fmt.Sprintf("%v", *request.Temperature))
 			}
 
-			if request.MaxCompletionTokens != "" {
-				r.Header.Set(fmt.Sprintf("%v", e.requestFields["max_completion_tokens"]), request.MaxCompletionTokens)
+			if request.MaxCompletionTokens != nil {
+				r.Header.Set(fmt.Sprintf("%v", e.requestFields["max_completion_tokens"]), fmt.Sprintf("%v", *request.MaxCompletionTokens))
 			}
 
 			if request.Logprobs != nil {
