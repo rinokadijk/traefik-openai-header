@@ -21,9 +21,12 @@ type Config struct {
 func CreateConfig() *Config {
 	fields := map[string]interface{}{}
 	fields["model"] = "X-OpenAI-Model"
+	fields["frequency_penalty"] = "X-OpenAI-Frequency-Penalty"
 	fields["user"] = "X-OpenAI-User"
 	fields["temperature"] = "X-OpenAI-Temperature"
+	fields["top_p"] = "X-OpenAI-Top-P"
 	fields["max_completion_tokens"] = "X-OpenAI-Max-Completion-Tokens"
+	fields["presence_penalty"] = "X-OpenAI-Presence-Penalty"
 	fields["logprobs"] = "X-OpenAI-Logprobs"
 	fields["top_logprobs"] = "X-OpenAI-Top-Logprobs"
 	fields["tool_choice"] = "X-OpenAI-Tool-Choice"
@@ -90,12 +93,12 @@ type chatCompletionRequest struct {
 	Model               string            `json:"model"`
 	Messages            json.RawMessage   `json:"messages,omitempty"`
 	Audio               audio             `json:"audio,omitempty"`
-	FrequencyPenalty    string            `json:"frequency_penalty,omitempty"`
+	FrequencyPenalty    *float32          `json:"frequency_penalty,omitempty"`
 	MaxCompletionTokens string            `json:"max_completion_tokens,omitempty"`
 	Metadata            map[string]string `json:"metadata,omitempty"`
 	Modalities          []string          `json:"modalities,omitempty"`
 	N                   *int              `json:"n,omitempty"`
-	PresencePenalty     *int              `json:"presence_penalty,omitempty"`
+	PresencePenalty     *float32          `json:"presence_penalty,omitempty"`
 	ReasoningEffort     string            `json:"reasoning_effort,omitempty"`
 	ResponseFormat      responseFormat    `json:"response_format,omitempty"`
 	Seed                *int              `json:"seed,omitempty"`
@@ -104,7 +107,7 @@ type chatCompletionRequest struct {
 	Stream              *bool             `json:"stream,omitempty"`
 	StreamOptions       streamOptions     `json:"stream_options,omitempty"`
 	Temperature         *float32          `json:"temperature,omitempty"`
-	TopP                *int              `json:"top_p,omitempty"`
+	TopP                *float32          `json:"top_p,omitempty"`
 	User                string            `json:"user,omitempty"`
 	WebSearchOptions    webSearchOptions  `json:"web_search_options,omitempty"`
 	Logprobs            *bool             `json:"logprobs"`
@@ -162,6 +165,18 @@ func (e *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 			if request.ToolChoice != "" {
 				r.Header.Set(fmt.Sprintf("%v", e.requestFields["tool_choice"]), request.ToolChoice)
+			}
+
+			if request.FrequencyPenalty != nil {
+				r.Header.Set(fmt.Sprintf("%v", e.requestFields["frequency_penalty"]), fmt.Sprintf("%v", *request.FrequencyPenalty))
+			}
+
+			if request.PresencePenalty != nil {
+				r.Header.Set(fmt.Sprintf("%v", e.requestFields["presence_penalty"]), fmt.Sprintf("%v", *request.FrequencyPenalty))
+			}
+
+			if request.TopP != nil {
+				r.Header.Set(fmt.Sprintf("%v", e.requestFields["top_p"]), fmt.Sprintf("%v", *request.TopP))
 			}
 
 			if request.Stream != nil {
