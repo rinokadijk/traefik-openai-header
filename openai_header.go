@@ -65,8 +65,7 @@ type audio struct {
 }
 
 type responseFormat struct {
-	Type  string `json:"type,omitempty"`
-	Voice string `json:"json_schema,omitempty"`
+	Type string `json:"type,omitempty"`
 }
 
 type streamOptions struct {
