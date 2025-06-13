@@ -171,7 +171,7 @@ func (e *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 
 			if request.PresencePenalty != nil {
-				r.Header.Set(fmt.Sprintf("%v", e.requestFields["presence_penalty"]), fmt.Sprintf("%v", *request.FrequencyPenalty))
+				r.Header.Set(fmt.Sprintf("%v", e.requestFields["presence_penalty"]), fmt.Sprintf("%v", *request.PresencePenalty))
 			}
 
 			if request.TopP != nil {

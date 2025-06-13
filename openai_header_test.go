@@ -93,6 +93,13 @@ func TestOpenAiModelHeader_ServeHTTP(t *testing.T) {
 			want:          "X-OpenAI-Top-Logprobs",
 			error:         false,
 		},
+		{
+			name:          "openai-temp-topp-presence-penalty",
+			input:         "{\"model\": \"deepseek-r1-0528\", \"messages\": [{\"role\": \"user\", \"content\": \"What is the capital of New York?\"}], \"temperature\": 0.7, \"top_p\": 0.6, \"presence_penalty\" : 0.0}",
+			requestFields: map[string]string{},
+			want:          "X-OpenAI-Presence-Penalty",
+			error:         false,
+		},
 	}
 
 	for _, tt := range tests {
