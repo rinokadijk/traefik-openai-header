@@ -87,10 +87,24 @@ func TestOpenAiModelHeader_ServeHTTP(t *testing.T) {
 			error:         false,
 		},
 		{
+			name:          "openai-functions-toolchoice-object",
+			input:         "{\n  \"model\": \"gpt-4.1\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"What is the weather like in Boston today?\"\n    }\n  ],\n  \"tools\": [\n    {\n      \"type\": \"function\",\n      \"function\": {\n        \"name\": \"get_current_weather\",\n        \"description\": \"Get the current weather in a given location\",\n        \"parameters\": {\n          \"type\": \"object\",\n          \"properties\": {\n            \"location\": {\n              \"type\": \"string\",\n              \"description\": \"The city and state, e.g. San Francisco, CA\"\n            },\n            \"unit\": {\n              \"type\": \"string\",\n              \"enum\": [\"celsius\", \"fahrenheit\"]\n            }\n          },\n          \"required\": [\"location\"]\n        }\n      }\n    }\n  ],\n  \"tool_choice\": {\"type\":\"file_search\"}\n}",
+			requestFields: map[string]string{},
+			want:          "X-OpenAI-Model",
+			error:         false,
+		},
+		{
 			name:          "openai-logprobs",
-			input:         "{\n    \"model\": \"gpt-4.1\",\n    \"messages\": [\n      {\n        \"role\": \"user\",\n        \"content\": \"Hello!\"\n      }\n    ],\n    \"logprobs\": true,\n    \"top_logprobs\": 2\n  }",
+			input:         "{\n    \"model\": \"gpt-4.1\",\n    \"messages\": [\n      {\n        \"role\": \"user\",\n        \"content\": \"Hello!\"\n      }\n    ],\n    \"logprobs\": 5,\n    \"top_logprobs\": 2\n  }",
 			requestFields: map[string]string{},
 			want:          "X-OpenAI-Top-Logprobs",
+			error:         false,
+		},
+		{
+			name:          "openai-logprobs-null",
+			input:         "{\n    \"model\": \"gpt-4.1\",\n    \"messages\": [\n      {\n        \"role\": \"user\",\n        \"content\": \"Hello!\"\n      }\n    ],\n    \"logprobs\": null,\n    \"top_logprobs\": 2\n  }",
+			requestFields: map[string]string{},
+			want:          "X-OpenAI-Model",
 			error:         false,
 		},
 		{

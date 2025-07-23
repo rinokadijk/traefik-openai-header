@@ -109,9 +109,9 @@ type chatCompletionRequest struct {
 	TopP                *float32          `json:"top_p,omitempty"`
 	User                string            `json:"user,omitempty"`
 	WebSearchOptions    webSearchOptions  `json:"web_search_options,omitempty"`
-	Logprobs            *bool             `json:"logprobs"`
+	Logprobs            *int              `json:"logprobs"`
 	TopLogprobs         *int              `json:"top_logprobs"`
-	ToolChoice          string            `json:"tool_choice"`
+	ToolChoice          interface{}       `json:"tool_choice"`
 }
 
 func (e *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -162,8 +162,8 @@ func (e *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				r.Header.Set(fmt.Sprintf("%v", e.requestFields["top_logprobs"]), fmt.Sprintf("%v", *request.TopLogprobs))
 			}
 
-			if request.ToolChoice != "" {
-				r.Header.Set(fmt.Sprintf("%v", e.requestFields["tool_choice"]), request.ToolChoice)
+			if toolChoice, ok := request.ToolChoice.(string); ok {
+				r.Header.Set(fmt.Sprintf("%v", e.requestFields["tool_choice"]), toolChoice)
 			}
 
 			if request.FrequencyPenalty != nil {
