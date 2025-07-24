@@ -38,6 +38,13 @@ func TestOpenAiModelHeader_ServeHTTP(t *testing.T) {
 			error:         false,
 		},
 		{
+			name:          "model-with-parse-failure",
+			input:         "{\"model\": \"test\",\"unknownfield\":\"value\"}",
+			requestFields: map[string]string{},
+			want:          "X-OpenAI-Model",
+			error:         false,
+		},
+		{
 			name:          "2 models",
 			input:         "{\"model\": \"test\", \"model\": \"test2\"}",
 			requestFields: map[string]string{},

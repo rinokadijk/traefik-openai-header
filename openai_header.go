@@ -114,6 +114,10 @@ type chatCompletionRequest struct {
 	ToolChoice          interface{}       `json:"tool_choice"`
 }
 
+type chatCompletionModelOnlyRequest struct {
+	Model string `json:"model"`
+}
+
 func (e *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	matched, err := regexp.MatchString(e.requestURIRegex, r.RequestURI)
 
@@ -139,8 +143,16 @@ func (e *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if err := json.Unmarshal(data, &request); err != nil {
 				r.Header.Set("X-OpenAI-Parse-Failure", err.Error())
 				fmt.Println("Unable to unmarshal", err.Error())
+				modelOnlyRequest := chatCompletionModelOnlyRequest{}
+				err = json.Unmarshal(data, &modelOnlyRequest)
+				if err != nil {
+					r.Header.Set("X-OpenAI-Parse-Failure", "Unknown model")
+				} else {
+					r.Header.Set(fmt.Sprintf("%v", e.requestFields["model"]), request.Model)
+				}
+			} else {
+				r.Header.Set(fmt.Sprintf("%v", e.requestFields["model"]), request.Model)
 			}
-			r.Header.Set(fmt.Sprintf("%v", e.requestFields["model"]), request.Model)
 
 			if request.User != "" {
 				r.Header.Set(fmt.Sprintf("%v", e.requestFields["user"]), request.User)
