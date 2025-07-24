@@ -11,10 +11,14 @@ import (
 	"regexp"
 )
 
+const ParseFailureHeader = "X-OpenAI-Parse-Failure"
+
 // Config the plugin configuration.
 type Config struct {
-	RequestFields   map[string]interface{} `json:"requestFields"`
-	RequestURIRegex string                 `json:"requestUriRegex"`
+	RequestFields          map[string]interface{} `json:"requestFields"`
+	RequestURIRegex        string                 `json:"requestUriRegex"`
+	ChatCompletionUriRegex string                 `json:"chatCompletionUriRegex"`
+	BatchUriRegex          string                 `json:"batchUriRegex"`
 }
 
 // CreateConfig creates the default plugin configuration.
@@ -31,18 +35,23 @@ func CreateConfig() *Config {
 	fields["top_logprobs"] = "X-OpenAI-Top-Logprobs"
 	fields["tool_choice"] = "X-OpenAI-Tool-Choice"
 	fields["stream"] = "X-OpenAI-Stream"
+	fields["completion_window"] = "X-OpenAI-Completion-Window"
+	fields["endpoint"] = "X-OpenAI-Endpoint"
 	return &Config{
-		RequestFields:   fields,
-		RequestURIRegex: "/v1/chat/completions",
+		RequestFields:          fields,
+		RequestURIRegex:        "/v1/chat/completions",
+		ChatCompletionUriRegex: "/v1/chat/completions",
+		BatchUriRegex:          "/v1/batches",
 	}
 }
 
 // Handler contains the config for the plugin
 type Handler struct {
-	name            string
-	next            http.Handler
-	requestFields   map[string]interface{}
-	requestURIRegex string
+	name                 string
+	next                 http.Handler
+	requestFields        map[string]interface{}
+	requestURIRegex      string
+	batchRequestURIRegex string
 }
 
 // New Creates a new HTTP Handler to translate the openai model into headers
@@ -51,11 +60,19 @@ func New(_ context.Context, next http.Handler, config *Config, name string) (htt
 		config = CreateConfig()
 	}
 
+	chatCompletionUri := ""
+	if config.RequestURIRegex != "" {
+		chatCompletionUri = config.RequestURIRegex
+	} else {
+		chatCompletionUri = config.ChatCompletionUriRegex
+	}
+
 	return &Handler{
-		name:            name,
-		requestFields:   config.RequestFields,
-		requestURIRegex: config.RequestURIRegex,
-		next:            next,
+		name:                 name,
+		requestFields:        config.RequestFields,
+		requestURIRegex:      chatCompletionUri,
+		batchRequestURIRegex: config.BatchUriRegex,
+		next:                 next,
 	}, nil
 }
 
@@ -118,14 +135,23 @@ type chatCompletionModelOnlyRequest struct {
 	Model string `json:"model"`
 }
 
-func (e *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	matched, err := regexp.MatchString(e.requestURIRegex, r.RequestURI)
+type batchRequest struct {
+	CompletionWindow string `json:"completion_window"`
+	Endpoint         string `json:"endpoint"`
+}
 
+func (e *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	isChatCompletionRequest, err := regexp.MatchString(e.requestURIRegex, r.RequestURI)
 	if err != nil {
 		fmt.Println("Error while matching RequestURI", err.Error())
 	}
 
-	if matched && r.Method == "POST" {
+	isBatchRequest, err := regexp.MatchString(e.batchRequestURIRegex, r.RequestURI)
+	if err != nil {
+		fmt.Println("Error while matching BatchRequestURI", err.Error())
+	}
+
+	if (isChatCompletionRequest || isBatchRequest) && r.Method == "POST" {
 		var body bytes.Buffer
 		tee := io.TeeReader(r.Body, &body)
 
@@ -135,68 +161,87 @@ func (e *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if len(data) < 1 {
-			r.Header.Set("X-OpenAI-Parse-Failure", "empty body")
+			r.Header.Set(ParseFailureHeader, "empty body")
 		}
 
-		if len(data) > 0 && len(e.requestFields) > 0 {
-			request := chatCompletionRequest{}
-			if err := json.Unmarshal(data, &request); err != nil {
-				r.Header.Set("X-OpenAI-Parse-Failure", err.Error())
-				fmt.Println("Unable to unmarshal", err.Error())
-				modelOnlyRequest := chatCompletionModelOnlyRequest{}
-				err = json.Unmarshal(data, &modelOnlyRequest)
-				if err != nil {
-					r.Header.Set("X-OpenAI-Parse-Failure", "Unknown model")
-				} else {
-					r.Header.Set(fmt.Sprintf("%v", e.requestFields["model"]), request.Model)
-				}
-			} else {
-				r.Header.Set(fmt.Sprintf("%v", e.requestFields["model"]), request.Model)
-			}
+		if len(data) > 0 && len(e.requestFields) > 0 && isChatCompletionRequest {
+			e.handleChatCompletionRequest(data, r)
+		}
 
-			if request.User != "" {
-				r.Header.Set(fmt.Sprintf("%v", e.requestFields["user"]), request.User)
-			}
-
-			if request.Temperature != nil {
-				r.Header.Set(fmt.Sprintf("%v", e.requestFields["temperature"]), fmt.Sprintf("%v", *request.Temperature))
-			}
-
-			if request.MaxCompletionTokens != nil {
-				r.Header.Set(fmt.Sprintf("%v", e.requestFields["max_completion_tokens"]), fmt.Sprintf("%v", *request.MaxCompletionTokens))
-			}
-
-			if request.Logprobs != nil {
-				r.Header.Set(fmt.Sprintf("%v", e.requestFields["logprobs"]), fmt.Sprintf("%v", *request.Logprobs))
-			}
-
-			if request.TopLogprobs != nil {
-				r.Header.Set(fmt.Sprintf("%v", e.requestFields["top_logprobs"]), fmt.Sprintf("%v", *request.TopLogprobs))
-			}
-
-			if toolChoice, ok := request.ToolChoice.(string); ok {
-				r.Header.Set(fmt.Sprintf("%v", e.requestFields["tool_choice"]), toolChoice)
-			}
-
-			if request.FrequencyPenalty != nil {
-				r.Header.Set(fmt.Sprintf("%v", e.requestFields["frequency_penalty"]), fmt.Sprintf("%v", *request.FrequencyPenalty))
-			}
-
-			if request.PresencePenalty != nil {
-				r.Header.Set(fmt.Sprintf("%v", e.requestFields["presence_penalty"]), fmt.Sprintf("%v", *request.PresencePenalty))
-			}
-
-			if request.TopP != nil {
-				r.Header.Set(fmt.Sprintf("%v", e.requestFields["top_p"]), fmt.Sprintf("%v", *request.TopP))
-			}
-
-			if request.Stream != nil {
-				r.Header.Set(fmt.Sprintf("%v", e.requestFields["stream"]), fmt.Sprintf("%v", *request.Stream))
-			}
+		if len(data) > 0 && len(e.requestFields) > 0 && isBatchRequest {
+			e.handleBatchRequest(data, r)
 		}
 
 		r.Body = io.NopCloser(bytes.NewReader(data))
 	}
 
 	e.next.ServeHTTP(w, r)
+}
+
+func (e *Handler) handleChatCompletionRequest(data []byte, r *http.Request) {
+	request := chatCompletionRequest{}
+	if err := json.Unmarshal(data, &request); err != nil {
+		r.Header.Set(ParseFailureHeader, err.Error())
+		fmt.Println("Unable to unmarshal", err.Error())
+		modelOnlyRequest := chatCompletionModelOnlyRequest{}
+		err = json.Unmarshal(data, &modelOnlyRequest)
+		if err != nil {
+			r.Header.Set(ParseFailureHeader, "Unknown model")
+		} else {
+			r.Header.Set(fmt.Sprintf("%v", e.requestFields["model"]), request.Model)
+		}
+	} else {
+		r.Header.Set(fmt.Sprintf("%v", e.requestFields["model"]), request.Model)
+	}
+
+	if request.User != "" {
+		r.Header.Set(fmt.Sprintf("%v", e.requestFields["user"]), request.User)
+	}
+
+	if request.Temperature != nil {
+		r.Header.Set(fmt.Sprintf("%v", e.requestFields["temperature"]), fmt.Sprintf("%v", *request.Temperature))
+	}
+
+	if request.MaxCompletionTokens != nil {
+		r.Header.Set(fmt.Sprintf("%v", e.requestFields["max_completion_tokens"]), fmt.Sprintf("%v", *request.MaxCompletionTokens))
+	}
+
+	if request.Logprobs != nil {
+		r.Header.Set(fmt.Sprintf("%v", e.requestFields["logprobs"]), fmt.Sprintf("%v", *request.Logprobs))
+	}
+
+	if request.TopLogprobs != nil {
+		r.Header.Set(fmt.Sprintf("%v", e.requestFields["top_logprobs"]), fmt.Sprintf("%v", *request.TopLogprobs))
+	}
+
+	if toolChoice, ok := request.ToolChoice.(string); ok {
+		r.Header.Set(fmt.Sprintf("%v", e.requestFields["tool_choice"]), toolChoice)
+	}
+
+	if request.FrequencyPenalty != nil {
+		r.Header.Set(fmt.Sprintf("%v", e.requestFields["frequency_penalty"]), fmt.Sprintf("%v", *request.FrequencyPenalty))
+	}
+
+	if request.PresencePenalty != nil {
+		r.Header.Set(fmt.Sprintf("%v", e.requestFields["presence_penalty"]), fmt.Sprintf("%v", *request.PresencePenalty))
+	}
+
+	if request.TopP != nil {
+		r.Header.Set(fmt.Sprintf("%v", e.requestFields["top_p"]), fmt.Sprintf("%v", *request.TopP))
+	}
+
+	if request.Stream != nil {
+		r.Header.Set(fmt.Sprintf("%v", e.requestFields["stream"]), fmt.Sprintf("%v", *request.Stream))
+	}
+}
+
+func (e *Handler) handleBatchRequest(data []byte, r *http.Request) {
+	request := batchRequest{}
+	if err := json.Unmarshal(data, &request); err != nil {
+		r.Header.Set(ParseFailureHeader, err.Error())
+		fmt.Println("Unable to unmarshal", err.Error())
+	} else {
+		r.Header.Set(fmt.Sprintf("%v", e.requestFields["completion_window"]), request.CompletionWindow)
+		r.Header.Set(fmt.Sprintf("%v", e.requestFields["endpoint"]), request.Endpoint)
+	}
 }

@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestOpenAiModelHeader_ServeHTTP(t *testing.T) {
+func TestChatCompletionHeaders_ServeHTTP(t *testing.T) {
 	tests := []struct {
 		name          string
 		input         string
@@ -147,7 +147,69 @@ func TestOpenAiModelHeader_ServeHTTP(t *testing.T) {
 			}
 		})
 	}
+}
 
+func TestBatchHeaders_ServeHTTP(t *testing.T) {
+	tests := []struct {
+		name          string
+		input         string
+		requestFields map[string]string
+		want          string
+		error         bool
+	}{
+		{
+			name:          "empty",
+			input:         "",
+			requestFields: map[string]string{},
+			want:          "X-OpenAI-Parse-Failure",
+			error:         false,
+		},
+		{
+			name:          "non json",
+			input:         "INVALID JSON",
+			requestFields: map[string]string{},
+			want:          "X-OpenAI-Parse-Failure",
+			error:         false,
+		},
+		{
+			name:          "batch-with-completion-window",
+			input:         "{\n    \"input_file_id\": \"file-abc123\",\n    \"endpoint\": \"/v1/chat/completions\",\n    \"completion_window\": \"24h\"\n  }",
+			requestFields: map[string]string{},
+			want:          "X-OpenAI-Completion-Window",
+			error:         false,
+		},
+		{
+			name:          "batch-with-endpoint-and-metadata",
+			input:         "{\n    \"input_file_id\": \"file-abc123\",\n    \"endpoint\": \"/v1/chat/completions\",\n    \"completion_window\": \"24h\"\n, \"metadata\": {\n    \"customer_id\": \"user_123456789\",\n    \"batch_description\": \"Nightly eval job\"\n }\n }",
+			requestFields: map[string]string{},
+			want:          "X-OpenAI-Endpoint",
+			error:         false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			vh := validationHandler{
+				t:     t,
+				want:  tt.want,
+				error: tt.error,
+			}
+
+			e, err := New(nil, vh, newConfig(), tt.name)
+			if err != nil {
+				t.Errorf("Failed initializing Handler: %s", err)
+				t.FailNow()
+			}
+
+			recorder := httptest.NewRecorder()
+			e.ServeHTTP(recorder, httptest.NewRequest("POST", "/v1/batches", strings.NewReader(tt.input)))
+
+			if recorder.Code != http.StatusOK && !tt.error {
+				t.Errorf("expected status code 200 but got %d", recorder.Code)
+				t.FailNow()
+			}
+		})
+	}
 }
 
 type String string

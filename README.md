@@ -3,7 +3,8 @@ This is a middleware plugin gets openai request metadata as headers.
 
 ## Config
 ```yaml
-requestUriPrefix: /v1/chat/completions
+chatCompletionUriRegex: /v1/chat/completions
+batchUriRegex: /v1/batches
 requestFields:
   model: X-OpenAI-Model
   user: X-OpenAI-User
@@ -13,4 +14,6 @@ requestFields:
   top_logprobs: X-OpenAI-Top-Logprobs
   tool_choice: X-OpenAI-Tool-Choice
   stream: X-OpenAI-Stream
+  completion_window: X-OpenAI-Completion-Window
+  endpoint: X-OpenAI-Endpoint
 ```

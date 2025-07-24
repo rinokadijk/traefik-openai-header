@@ -4,7 +4,10 @@ type: middleware
 import: github.com/rinokadijk/traefik-openai-header
 
 testData:
-  requestUriPrefix: /v1/chat/completions
+  chatCompletionUriRegex: /v1/chat/completions
+  batchUriRegex: /v1/batches
   requestFields:
     model: X-OpenAI-Model
     user: X-OpenAI-User
+    completion_window: X-OpenAI-Completion-Window
+    endpoint: X-OpenAI-Endpoint
