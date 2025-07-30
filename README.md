@@ -15,5 +15,5 @@ requestFields:
   tool_choice: X-OpenAI-Tool-Choice
   stream: X-OpenAI-Stream
   completion_window: X-OpenAI-Completion-Window
-  endpoint: X-OpenAI-Endpoint
+  oai_endpoint: X-OpenAI-Endpoint
 ```

@@ -36,7 +36,7 @@ func CreateConfig() *Config {
 	fields["tool_choice"] = "X-OpenAI-Tool-Choice"
 	fields["stream"] = "X-OpenAI-Stream"
 	fields["completion_window"] = "X-OpenAI-Completion-Window"
-	fields["endpoint"] = "X-OpenAI-Endpoint"
+	fields["oai_endpoint"] = "X-OpenAI-Endpoint"
 	return &Config{
 		RequestFields:          fields,
 		RequestURIRegex:        "/v1/chat/completions",
@@ -242,6 +242,6 @@ func (e *Handler) handleBatchRequest(data []byte, r *http.Request) {
 		fmt.Println("Unable to unmarshal", err.Error())
 	} else {
 		r.Header.Set(fmt.Sprintf("%v", e.requestFields["completion_window"]), request.CompletionWindow)
-		r.Header.Set(fmt.Sprintf("%v", e.requestFields["endpoint"]), request.Endpoint)
+		r.Header.Set(fmt.Sprintf("%v", e.requestFields["oai_endpoint"]), request.Endpoint)
 	}
 }

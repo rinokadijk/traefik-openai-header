@@ -10,4 +10,4 @@ testData:
     model: X-OpenAI-Model
     user: X-OpenAI-User
     completion_window: X-OpenAI-Completion-Window
-    endpoint: X-OpenAI-Endpoint
+    oai_endpoint: X-OpenAI-Endpoint
