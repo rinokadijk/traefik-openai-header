@@ -12,6 +12,7 @@ import (
 )
 
 const ParseFailureHeader = "X-OpenAI-Parse-Failure"
+const UserAgentHeader = "X-OpenAI-User-Agent"
 
 // Config the plugin configuration.
 type Config struct {
@@ -172,6 +173,10 @@ func (e *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			e.handleBatchRequest(data, r)
 		}
 
+		if len(r.Header.Get("User-Agent")) > 0 {
+			r.Header.Set(UserAgentHeader, r.Header.Get("User-Agent"))
+		}
+
 		r.Body = io.NopCloser(bytes.NewReader(data))
 	}
 
@@ -199,39 +204,66 @@ func (e *Handler) handleChatCompletionRequest(data []byte, r *http.Request) {
 	}
 
 	if request.Temperature != nil {
-		r.Header.Set(fmt.Sprintf("%v", e.requestFields["temperature"]), fmt.Sprintf("%v", *request.Temperature))
+		field := fmt.Sprintf("%v", e.requestFields["temperature"])
+		if len(field) > 0 {
+			r.Header.Set(field, fmt.Sprintf("%v", *request.Temperature))
+		}
 	}
 
 	if request.MaxCompletionTokens != nil {
-		r.Header.Set(fmt.Sprintf("%v", e.requestFields["max_completion_tokens"]), fmt.Sprintf("%v", *request.MaxCompletionTokens))
+		field := fmt.Sprintf("%v", e.requestFields["max_completion_tokens"])
+		if len(field) > 0 {
+			r.Header.Set(field, fmt.Sprintf("%v", *request.MaxCompletionTokens))
+		}
 	}
 
 	if request.Logprobs != nil {
-		r.Header.Set(fmt.Sprintf("%v", e.requestFields["logprobs"]), fmt.Sprintf("%v", *request.Logprobs))
+		field := fmt.Sprintf("%v", e.requestFields["logprobs"])
+		if len(field) > 0 {
+			r.Header.Set(field, fmt.Sprintf("%v", *request.Logprobs))
+		}
 	}
 
 	if request.TopLogprobs != nil {
-		r.Header.Set(fmt.Sprintf("%v", e.requestFields["top_logprobs"]), fmt.Sprintf("%v", *request.TopLogprobs))
+		field := fmt.Sprintf("%v", e.requestFields["top_logprobs"])
+		if len(field) > 0 {
+			r.Header.Set(field, fmt.Sprintf("%v", *request.TopLogprobs))
+		}
 	}
 
 	if toolChoice, ok := request.ToolChoice.(string); ok {
-		r.Header.Set(fmt.Sprintf("%v", e.requestFields["tool_choice"]), toolChoice)
+		field := fmt.Sprintf("%v", e.requestFields["tool_choice"])
+		if len(field) > 0 {
+			r.Header.Set(field, toolChoice)
+		}
 	}
 
 	if request.FrequencyPenalty != nil {
-		r.Header.Set(fmt.Sprintf("%v", e.requestFields["frequency_penalty"]), fmt.Sprintf("%v", *request.FrequencyPenalty))
+		field := fmt.Sprintf("%v", e.requestFields["frequency_penalty"])
+		if len(field) > 0 {
+			r.Header.Set(field, fmt.Sprintf("%v", *request.FrequencyPenalty))
+		}
 	}
 
 	if request.PresencePenalty != nil {
-		r.Header.Set(fmt.Sprintf("%v", e.requestFields["presence_penalty"]), fmt.Sprintf("%v", *request.PresencePenalty))
+		field := fmt.Sprintf("%v", e.requestFields["presence_penalty"])
+		if len(field) > 0 {
+			r.Header.Set(field, fmt.Sprintf("%v", *request.PresencePenalty))
+		}
 	}
 
 	if request.TopP != nil {
-		r.Header.Set(fmt.Sprintf("%v", e.requestFields["top_p"]), fmt.Sprintf("%v", *request.TopP))
+		field := fmt.Sprintf("%v", e.requestFields["top_p"])
+		if len(field) > 0 {
+			r.Header.Set(field, fmt.Sprintf("%v", *request.TopP))
+		}
 	}
 
 	if request.Stream != nil {
-		r.Header.Set(fmt.Sprintf("%v", e.requestFields["stream"]), fmt.Sprintf("%v", *request.Stream))
+		field := fmt.Sprintf("%v", e.requestFields["stream"])
+		if len(field) > 0 {
+			r.Header.Set(field, fmt.Sprintf("%v", *request.Stream))
+		}
 	}
 }
 

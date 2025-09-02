@@ -15,6 +15,7 @@ func TestChatCompletionHeaders_ServeHTTP(t *testing.T) {
 		requestFields map[string]string
 		want          string
 		error         bool
+		userAgent     bool
 	}{
 		{
 			name:          "empty",
@@ -121,6 +122,22 @@ func TestChatCompletionHeaders_ServeHTTP(t *testing.T) {
 			want:          "X-OpenAI-Presence-Penalty",
 			error:         false,
 		},
+		{
+			name:          "user-agent",
+			input:         "{\"model\": \"deepseek-r1-0528\", \"messages\": [{\"role\": \"user\", \"content\": \"What is the capital of New York?\"}], \"temperature\": 0.7, \"top_p\": 0.6, \"presence_penalty\" : 0.0}",
+			requestFields: map[string]string{},
+			want:          "X-OpenAI-User-Agent",
+			error:         false,
+			userAgent:     true,
+		},
+		{
+			name:          "no-user-agent",
+			input:         "{\"model\": \"deepseek-r1-0528\", \"messages\": [{\"role\": \"user\", \"content\": \"What is the capital of New York?\"}], \"temperature\": 0.7, \"top_p\": 0.6, \"presence_penalty\" : 0.0}",
+			requestFields: map[string]string{},
+			want:          "X-OpenAI-Model",
+			error:         false,
+			userAgent:     false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -138,8 +155,16 @@ func TestChatCompletionHeaders_ServeHTTP(t *testing.T) {
 			}
 
 			recorder := httptest.NewRecorder()
-			e.ServeHTTP(recorder, httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(tt.input)))
-			e.ServeHTTP(recorder, httptest.NewRequest("POST", "/v1/completions", strings.NewReader(tt.input)))
+			chatCompletions := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(tt.input))
+			if tt.userAgent {
+				chatCompletions.Header.Set("User-Agent", "httptest/1.0")
+			}
+			completions := httptest.NewRequest("POST", "/v1/completions", strings.NewReader(tt.input))
+			if tt.userAgent {
+				completions.Header.Set("User-Agent", "httptest-2.0")
+			}
+			e.ServeHTTP(recorder, chatCompletions)
+			e.ServeHTTP(recorder, completions)
 
 			if recorder.Code != http.StatusOK && !tt.error {
 				t.Errorf("expected status code 200 but got %d", recorder.Code)
