@@ -185,18 +185,23 @@ func (e *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (e *Handler) handleChatCompletionRequest(data []byte, r *http.Request) {
 	request := chatCompletionRequest{}
+	modelField := fmt.Sprintf("%v", e.requestFields["model"])
 	if err := json.Unmarshal(data, &request); err != nil {
 		r.Header.Set(ParseFailureHeader, err.Error())
 		fmt.Println("Unable to unmarshal", err.Error())
 		modelOnlyRequest := chatCompletionModelOnlyRequest{}
 		err = json.Unmarshal(data, &modelOnlyRequest)
-		if err != nil {
+		if err != nil || len(modelField) < 1 {
 			r.Header.Set(ParseFailureHeader, "Unknown model")
 		} else {
-			r.Header.Set(fmt.Sprintf("%v", e.requestFields["model"]), request.Model)
+			r.Header.Set(modelField, request.Model)
 		}
 	} else {
-		r.Header.Set(fmt.Sprintf("%v", e.requestFields["model"]), request.Model)
+		if len(modelField) < 1 {
+			r.Header.Set(ParseFailureHeader, "No model field configuration")
+		} else {
+			r.Header.Set(modelField, request.Model)
+		}
 	}
 
 	if request.User != "" {

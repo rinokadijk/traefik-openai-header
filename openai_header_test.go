@@ -148,7 +148,7 @@ func TestChatCompletionHeaders_ServeHTTP(t *testing.T) {
 				error: tt.error,
 			}
 
-			e, err := New(nil, vh, newConfig(), tt.name)
+			e, err := New(nil, vh, defaultConfig(), tt.name)
 			if err != nil {
 				t.Errorf("Failed initializing Handler: %s", err)
 				t.FailNow()
@@ -166,6 +166,184 @@ func TestChatCompletionHeaders_ServeHTTP(t *testing.T) {
 			e.ServeHTTP(recorder, chatCompletions)
 			e.ServeHTTP(recorder, completions)
 
+			if recorder.Code != http.StatusOK && !tt.error {
+				t.Errorf("expected status code 200 but got %d", recorder.Code)
+				t.FailNow()
+			}
+		})
+	}
+}
+
+func TestChatCompletionHeadersEmptyConfig_ServeHTTP(t *testing.T) {
+	tests := []struct {
+		name          string
+		input         string
+		requestFields map[string]string
+		want          string
+		error         bool
+		userAgent     bool
+	}{
+		{
+			name:          "empty",
+			input:         "",
+			requestFields: map[string]string{},
+			want:          "X-OpenAI-Parse-Failure",
+			error:         false,
+			userAgent:     true,
+		},
+		{
+			name:          "non json",
+			input:         "INVALID JSON",
+			requestFields: map[string]string{},
+			want:          "X-OpenAI-User-Agent",
+			error:         false,
+			userAgent:     true,
+		},
+		{
+			name:          "model",
+			input:         "{\"model\": \"test\"}",
+			requestFields: map[string]string{},
+			want:          "X-OpenAI-User-Agent",
+			error:         false,
+			userAgent:     true,
+		},
+		{
+			name:          "model-with-parse-failure",
+			input:         "{\"model\": \"test\",\"unknownfield\":\"value\"}",
+			requestFields: map[string]string{},
+			want:          "X-OpenAI-User-Agent",
+			error:         false,
+			userAgent:     true,
+		},
+		{
+			name:          "2 models",
+			input:         "{\"model\": \"test\", \"model\": \"test2\"}",
+			requestFields: map[string]string{},
+			want:          "X-OpenAI-User-Agent",
+			error:         false,
+			userAgent:     true,
+		},
+		{
+			name:          "user",
+			input:         "{\"user\": \"test\"}",
+			requestFields: map[string]string{},
+			want:          "X-OpenAI-User-Agent",
+			error:         false,
+			userAgent:     true,
+		},
+		{
+			name:          "temperature",
+			input:         "{\"temperature\": 1.0}",
+			requestFields: map[string]string{},
+			want:          "X-OpenAI-User-Agent",
+			error:         false,
+			userAgent:     true,
+		},
+		{
+			name:          "openai-default",
+			input:         "{\n  \"model\": \"gpt-4.1\",\n  \"messages\": [\n    {\n      \"role\": \"developer\",\n      \"content\": \"You are a helpful assistant.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"Hello!\"\n    }\n  ]\n}",
+			requestFields: map[string]string{},
+			want:          "X-OpenAI-User-Agent",
+			error:         false,
+			userAgent:     true,
+		},
+		{
+			name:          "openai-image",
+			input:         "{\n    \"model\": \"gpt-4.1\",\n    \"messages\": [\n      {\n        \"role\": \"user\",\n        \"content\": [\n          {\n            \"type\": \"text\",\n            \"text\": \"What is in this image?\"\n          },\n          {\n            \"type\": \"image_url\",\n            \"image_url\": {\n              \"url\": \"https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg\"\n            }\n          }\n        ]\n      }\n    ],\n    \"max_tokens\": 300\n  }",
+			requestFields: map[string]string{},
+			want:          "X-OpenAI-User-Agent",
+			error:         false,
+			userAgent:     true,
+		},
+		{
+			name:          "openai-stream",
+			input:         "{\n    \"model\": \"gpt-4.1\",\n    \"messages\": [\n      {\n        \"role\": \"developer\",\n        \"content\": \"You are a helpful assistant.\"\n      },\n      {\n        \"role\": \"user\",\n        \"content\": \"Hello!\"\n      }\n    ],\n    \"stream\": true\n  }",
+			requestFields: map[string]string{},
+			want:          "X-OpenAI-User-Agent",
+			error:         false,
+			userAgent:     true,
+		},
+		{
+			name:          "openai-functions",
+			input:         "{\n  \"model\": \"gpt-4.1\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"What is the weather like in Boston today?\"\n    }\n  ],\n  \"tools\": [\n    {\n      \"type\": \"function\",\n      \"function\": {\n        \"name\": \"get_current_weather\",\n        \"description\": \"Get the current weather in a given location\",\n        \"parameters\": {\n          \"type\": \"object\",\n          \"properties\": {\n            \"location\": {\n              \"type\": \"string\",\n              \"description\": \"The city and state, e.g. San Francisco, CA\"\n            },\n            \"unit\": {\n              \"type\": \"string\",\n              \"enum\": [\"celsius\", \"fahrenheit\"]\n            }\n          },\n          \"required\": [\"location\"]\n        }\n      }\n    }\n  ],\n  \"tool_choice\": \"auto\"\n}",
+			requestFields: map[string]string{},
+			want:          "X-OpenAI-User-Agent",
+			error:         false,
+			userAgent:     true,
+		},
+		{
+			name:          "openai-functions-toolchoice-object",
+			input:         "{\n  \"model\": \"gpt-4.1\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"What is the weather like in Boston today?\"\n    }\n  ],\n  \"tools\": [\n    {\n      \"type\": \"function\",\n      \"function\": {\n        \"name\": \"get_current_weather\",\n        \"description\": \"Get the current weather in a given location\",\n        \"parameters\": {\n          \"type\": \"object\",\n          \"properties\": {\n            \"location\": {\n              \"type\": \"string\",\n              \"description\": \"The city and state, e.g. San Francisco, CA\"\n            },\n            \"unit\": {\n              \"type\": \"string\",\n              \"enum\": [\"celsius\", \"fahrenheit\"]\n            }\n          },\n          \"required\": [\"location\"]\n        }\n      }\n    }\n  ],\n  \"tool_choice\": {\"type\":\"file_search\"}\n}",
+			requestFields: map[string]string{},
+			want:          "X-OpenAI-User-Agent",
+			error:         false,
+			userAgent:     true,
+		},
+		{
+			name:          "openai-logprobs",
+			input:         "{\n    \"model\": \"gpt-4.1\",\n    \"messages\": [\n      {\n        \"role\": \"user\",\n        \"content\": \"Hello!\"\n      }\n    ],\n    \"logprobs\": 5,\n    \"top_logprobs\": 2\n  }",
+			requestFields: map[string]string{},
+			want:          "X-OpenAI-User-Agent",
+			error:         false,
+			userAgent:     true,
+		},
+		{
+			name:          "openai-logprobs-null",
+			input:         "{\n    \"model\": \"gpt-4.1\",\n    \"messages\": [\n      {\n        \"role\": \"user\",\n        \"content\": \"Hello!\"\n      }\n    ],\n    \"logprobs\": null,\n    \"top_logprobs\": 2\n  }",
+			requestFields: map[string]string{},
+			want:          "X-OpenAI-User-Agent",
+			error:         false,
+			userAgent:     true,
+		},
+		{
+			name:          "openai-temp-topp-presence-penalty",
+			input:         "{\"model\": \"deepseek-r1-0528\", \"messages\": [{\"role\": \"user\", \"content\": \"What is the capital of New York?\"}], \"temperature\": 0.7, \"top_p\": 0.6, \"presence_penalty\" : 0.0}",
+			requestFields: map[string]string{},
+			want:          "X-OpenAI-User-Agent",
+			error:         false,
+			userAgent:     true,
+		},
+		{
+			name:          "user-agent",
+			input:         "{\"model\": \"deepseek-r1-0528\", \"messages\": [{\"role\": \"user\", \"content\": \"What is the capital of New York?\"}], \"temperature\": 0.7, \"top_p\": 0.6, \"presence_penalty\" : 0.0}",
+			requestFields: map[string]string{},
+			want:          "X-OpenAI-User-Agent",
+			error:         false,
+			userAgent:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			vh := validationHandler{
+				t:     t,
+				want:  tt.want,
+				error: tt.error,
+			}
+
+			e, err := New(nil, vh, emptyConfig(), tt.name)
+			if err != nil {
+				t.Errorf("Failed initializing Handler: %s", err)
+				t.FailNow()
+			}
+
+			recorder := httptest.NewRecorder()
+			chatCompletions := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(tt.input))
+			if tt.userAgent {
+				chatCompletions.Header.Set("User-Agent", "httptest/1.0")
+			}
+			completions := httptest.NewRequest("POST", "/v1/completions", strings.NewReader(tt.input))
+			if tt.userAgent {
+				completions.Header.Set("User-Agent", "httptest-2.0")
+			}
+
+			e.ServeHTTP(recorder, chatCompletions)
+			if recorder.Code != http.StatusOK && !tt.error {
+				t.Errorf("expected status code 200 but got %d", recorder.Code)
+				t.FailNow()
+			}
+
+			e.ServeHTTP(recorder, completions)
 			if recorder.Code != http.StatusOK && !tt.error {
 				t.Errorf("expected status code 200 but got %d", recorder.Code)
 				t.FailNow()
@@ -220,7 +398,7 @@ func TestBatchHeaders_ServeHTTP(t *testing.T) {
 				error: tt.error,
 			}
 
-			e, err := New(nil, vh, newConfig(), tt.name)
+			e, err := New(nil, vh, defaultConfig(), tt.name)
 			if err != nil {
 				t.Errorf("Failed initializing Handler: %s", err)
 				t.FailNow()
@@ -243,10 +421,18 @@ func (s String) AsReader() io.Reader {
 	return io.NopCloser(strings.NewReader(string(s)))
 }
 
-func newConfig() *Config {
+func defaultConfig() *Config {
 	c := CreateConfig()
 	c.RequestURIRegex = "/v1.*/completions"
 	return c
+}
+
+func emptyConfig() *Config {
+	return &Config{
+		RequestFields:   map[string]interface{}{},
+		RequestURIRegex: "/v1.*/completions",
+		BatchUriRegex:   "/v1/batches",
+	}
 }
 
 type validationHandler struct {
