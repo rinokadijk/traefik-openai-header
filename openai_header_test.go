@@ -138,6 +138,14 @@ func TestChatCompletionHeaders_ServeHTTP(t *testing.T) {
 			error:         false,
 			userAgent:     false,
 		},
+		{
+			name:          "user-agent",
+			input:         "{\"model\": \"deepseek-r1-0528\", \"stream_options\" : { \"include_usage\" : true }, \"messages\": [{\"role\": \"user\", \"content\": \"What is the capital of New York?\"}], \"temperature\": 0.7, \"top_p\": 0.6, \"presence_penalty\" : 0.0}",
+			requestFields: map[string]string{},
+			want:          "X-OpenAI-Stream-Options-Include-Usage",
+			error:         false,
+			userAgent:     true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -306,6 +314,14 @@ func TestChatCompletionHeadersEmptyConfig_ServeHTTP(t *testing.T) {
 		{
 			name:          "user-agent",
 			input:         "{\"model\": \"deepseek-r1-0528\", \"messages\": [{\"role\": \"user\", \"content\": \"What is the capital of New York?\"}], \"temperature\": 0.7, \"top_p\": 0.6, \"presence_penalty\" : 0.0}",
+			requestFields: map[string]string{},
+			want:          "X-OpenAI-User-Agent",
+			error:         false,
+			userAgent:     true,
+		},
+		{
+			name:          "user-agent",
+			input:         "{\"model\": \"deepseek-r1-0528\", \"stream_options\": { \"include_usage\": true }, \"messages\": [{\"role\": \"user\", \"content\": \"What is the capital of New York?\"}], \"temperature\": 0.7, \"top_p\": 0.6, \"presence_penalty\" : 0.0}",
 			requestFields: map[string]string{},
 			want:          "X-OpenAI-User-Agent",
 			error:         false,

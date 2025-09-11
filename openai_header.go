@@ -36,6 +36,7 @@ func CreateConfig() *Config {
 	fields["top_logprobs"] = "X-OpenAI-Top-Logprobs"
 	fields["tool_choice"] = "X-OpenAI-Tool-Choice"
 	fields["stream"] = "X-OpenAI-Stream"
+	fields["include_usage"] = "X-OpenAI-Stream-Options-Include-Usage"
 	fields["completion_window"] = "X-OpenAI-Completion-Window"
 	fields["oai_endpoint"] = "X-OpenAI-Endpoint"
 	return &Config{
@@ -268,6 +269,13 @@ func (e *Handler) handleChatCompletionRequest(data []byte, r *http.Request) {
 		field := fmt.Sprintf("%v", e.requestFields["stream"])
 		if len(field) > 0 {
 			r.Header.Set(field, fmt.Sprintf("%v", *request.Stream))
+		}
+	}
+
+	if request.StreamOptions.IncludeUsage != nil {
+		field := fmt.Sprintf("%v", e.requestFields["include_usage"])
+		if len(field) > 0 {
+			r.Header.Set(field, fmt.Sprintf("%v", *request.StreamOptions.IncludeUsage))
 		}
 	}
 }
