@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"sync"
 	"sync/atomic"
 )
 
@@ -58,9 +59,28 @@ func CreateConfig() *Config {
 	}
 }
 
+// Traefik builds one handler per router. Routers that reference the same middleware share
+// one in-flight counter, keyed by the middleware name, so maxInFlightBytes is per middleware
+// (per Traefik process), not per router.
+var (
+	budgetsMu sync.Mutex
+	budgets   = map[string]*int64{}
+)
+
+func sharedInFlight(name string) *int64 {
+	budgetsMu.Lock()
+	defer budgetsMu.Unlock()
+	if c, ok := budgets[name]; ok {
+		return c
+	}
+	c := new(int64)
+	budgets[name] = c
+	return c
+}
+
 // Handler contains the config for the plugin
 type Handler struct {
-	inFlight         int64 // first field: 64-bit aligned for sync/atomic on 32-bit platforms
+	inFlight         *int64 // shared across handlers with the same middleware name
 	name             string
 	next             http.Handler
 	requestFields    map[string]interface{}
@@ -75,8 +95,8 @@ func (e *Handler) acquire(n int64) bool {
 	if e.maxInFlightBytes <= 0 {
 		return true
 	}
-	if atomic.AddInt64(&e.inFlight, n) > e.maxInFlightBytes {
-		atomic.AddInt64(&e.inFlight, -n)
+	if atomic.AddInt64(e.inFlight, n) > e.maxInFlightBytes {
+		atomic.AddInt64(e.inFlight, -n)
 		return false
 	}
 	return true
@@ -86,11 +106,11 @@ func (e *Handler) release(n int64) {
 	if e.maxInFlightBytes <= 0 || n == 0 {
 		return
 	}
-	atomic.AddInt64(&e.inFlight, -n)
+	atomic.AddInt64(e.inFlight, -n)
 }
 
 func (e *Handler) inFlightBytes() int64 {
-	return atomic.LoadInt64(&e.inFlight)
+	return atomic.LoadInt64(e.inFlight)
 }
 
 // compileOrNil compiles expr once. An empty expr matches nothing.
@@ -134,6 +154,7 @@ func New(_ context.Context, next http.Handler, config *Config, name string) (htt
 	}
 
 	return &Handler{
+		inFlight:         sharedInFlight(name),
 		name:             name,
 		requestFields:    config.RequestFields,
 		chatRegex:        chatRegex,
