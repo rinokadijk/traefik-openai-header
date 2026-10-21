@@ -193,8 +193,9 @@ func TestDeclaredLength_DoesNotPreallocate(t *testing.T) {
 	if grew := after.TotalAlloc - before.TotalAlloc; grew > 1<<20 {
 		t.Fatalf("plugin allocated %d bytes for a 1-byte body with Content-Length 64 MiB; want under 1 MiB", grew)
 	}
-	if next.called {
-		t.Fatal("next handler ran for a truncated body")
+	// The truncated body goes to the gateway, marked, so the gateway rejects and logs it.
+	if !next.called || next.header.Get(ParseFailureHeader) != "read error" {
+		t.Fatalf("truncated body: next called = %v, parse-failure = %q; want forwarded with \"read error\"", next.called, next.header.Get(ParseFailureHeader))
 	}
 }
 
@@ -486,23 +487,68 @@ func TestNonMatchingRequests_BodyNeverRead(t *testing.T) {
 	}
 }
 
-func TestReadError_Is400AndStops(t *testing.T) {
+// partialThenErrorReader returns some bytes, then a read error (a client that stopped mid-upload).
+type partialThenErrorReader struct {
+	data []byte
+	err  error
+	done bool
+}
+
+func (p *partialThenErrorReader) Read(b []byte) (int, error) {
+	if p.done {
+		return 0, p.err
+	}
+	p.done = true
+	return copy(b, p.data), nil
+}
+
+func TestReadError_ForwardsPartialBodyWithParseFailureHeader(t *testing.T) {
 	next := &nextRecorder{}
 	h := newHandler(t, cappedConfig(1024), next)
-	req := postJSON("/v1/chat/completions", io.NopCloser(failingReader{t: t, err: errors.New("boom")}))
+	src := &partialThenErrorReader{data: []byte(`{"model":"gpt-4.1","mess`), err: errors.New("boom")}
+	req := postJSON("/v1/chat/completions", io.NopCloser(src))
 	rec := httptest.NewRecorder()
 
 	h.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", rec.Code)
+	// The gateway, not Traefik, answers a broken upload. It sees the bytes that arrived and a marker header.
+	if !next.called {
+		t.Fatalf("next handler did not run after a body read error; plugin answered %d %s", rec.Code, rec.Body.String())
 	}
-	if next.called {
-		t.Fatal("next handler ran after a body read error")
+	if got := next.header.Get(ParseFailureHeader); got != "read error" {
+		t.Errorf("%s = %q, want \"read error\"", ParseFailureHeader, got)
 	}
-	decodeError(t, rec)
+	if string(next.body) != `{"model":"gpt-4.1","mess` {
+		t.Errorf("downstream body = %q, want the bytes read before the error", next.body)
+	}
+	if next.length != int64(len(src.data)) {
+		t.Errorf("downstream ContentLength = %d, want %d", next.length, len(src.data))
+	}
 	// Internal error text (it can carry pod IPs and ports) must not reach the client.
 	if strings.Contains(rec.Body.String(), "boom") {
-		t.Errorf("400 body echoes the internal read error: %s", rec.Body.String())
+		t.Errorf("response echoes the internal read error: %s", rec.Body.String())
+	}
+}
+
+func TestReadError_ReleasesNothingExtraFromBudget(t *testing.T) {
+	cfg := cappedConfig(1024)
+	cfg.MaxInFlightBytes = 1000
+	var h http.Handler
+	var seen int64 = -1
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = h.(*Handler).inFlightBytes() // bytes read before the error are charged while the gateway holds them
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.WriteHeader(http.StatusOK)
+	})
+	h = newHandler(t, cfg, next)
+	src := &partialThenErrorReader{data: []byte("0123456789"), err: errors.New("boom")}
+
+	h.ServeHTTP(httptest.NewRecorder(), postJSON("/v1/chat/completions", io.NopCloser(src)))
+
+	if seen != 10 {
+		t.Errorf("in-flight bytes while the gateway held the partial body = %d, want 10", seen)
+	}
+	if got := h.(*Handler).inFlightBytes(); got != 0 {
+		t.Errorf("in-flight bytes after the request = %d, want 0", got)
 	}
 }

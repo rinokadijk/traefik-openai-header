@@ -215,7 +215,7 @@ func (e *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data, held, ok := e.readBody(w, r)
+	data, held, complete, ok := e.readBody(w, r)
 	if !ok {
 		// readBody wrote the error response. Never forward the request after that.
 		return
@@ -225,15 +225,16 @@ func (e *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// or at the latest when the request ends.
 	defer body.free()
 
-	if len(data) < 1 {
+	if complete && len(data) < 1 {
 		r.Header.Set(ParseFailureHeader, "empty body")
 	}
 
-	if len(data) > 0 && len(e.requestFields) > 0 && isChatCompletionRequest {
+	// A broken upload is forwarded as is, marked "read error". Its fields are not parsed.
+	if complete && len(data) > 0 && len(e.requestFields) > 0 && isChatCompletionRequest {
 		e.handleChatCompletionRequest(data, r)
 	}
 
-	if len(data) > 0 && len(e.requestFields) > 0 && isBatchRequest {
+	if complete && len(data) > 0 && len(e.requestFields) > 0 && isBatchRequest {
 		e.handleBatchRequest(data, r)
 	}
 
@@ -256,13 +257,15 @@ const (
 )
 
 // readBody reads the request body once into memory, bounded by maxBodyBytes and the in-flight budget.
-// It returns the data, the bytes charged to the budget, and false after it has written an error response.
-func (e *Handler) readBody(w http.ResponseWriter, r *http.Request) ([]byte, int64, bool) {
+// It returns the data, the bytes charged to the budget, whether the body arrived completely,
+// and false after it has written an error response.
+// A read error does not stop the request: the partial body is forwarded with a parse-failure header.
+func (e *Handler) readBody(w http.ResponseWriter, r *http.Request) ([]byte, int64, bool, bool) {
 	limit := e.maxBodyBytes
 	if limit > 0 && r.ContentLength > limit {
 		// The client declared the size. Reject before reading a single body byte.
 		e.rejectTooLarge(w, r)
-		return nil, 0, false
+		return nil, 0, false, false
 	}
 
 	var src io.Reader = r.Body
@@ -279,22 +282,24 @@ func (e *Handler) readBody(w http.ResponseWriter, r *http.Request) ([]byte, int6
 	buf.Grow(int(initial))
 
 	var held int64
+	complete := true
 	for {
 		n, err := buf.ReadFrom(io.LimitReader(src, readSlabBytes))
 		if n > 0 {
 			if !e.acquire(n) {
 				e.release(held)
 				e.rejectBudgetExceeded(w, r)
-				return nil, 0, false
+				return nil, 0, false, false
 			}
 			held += n
 		}
 		if err != nil {
-			e.release(held)
+			// The upload broke. Do not answer from Traefik: mark the request and forward the bytes
+			// that arrived, so the gateway rejects it through its normal path and logs it.
 			r.Header.Set(ParseFailureHeader, "read error")
 			fmt.Println("Unable to read request body", err.Error())
-			writeError(w, r, http.StatusBadRequest, "failed to read request body", "invalid_request_error", "invalid_request_body")
-			return nil, 0, false
+			complete = false
+			break
 		}
 		if n < readSlabBytes {
 			// The body ended inside this slab.
@@ -305,10 +310,10 @@ func (e *Handler) readBody(w http.ResponseWriter, r *http.Request) ([]byte, int6
 	if limit > 0 && int64(buf.Len()) > limit {
 		e.release(held)
 		e.rejectTooLarge(w, r)
-		return nil, 0, false
+		return nil, 0, false, false
 	}
 
-	return buf.Bytes(), held, true
+	return buf.Bytes(), held, complete, true
 }
 
 func (e *Handler) rejectTooLarge(w http.ResponseWriter, r *http.Request) {

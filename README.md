@@ -62,5 +62,5 @@ charged while they grow, so a 2 GiB budget needs about 4 GiB of headroom.
 - New optional `maxInFlightBytes` budget (off by default).
 - The body is read once, into one buffer, bounded by `maxBodyBytes`. v0.1.0 copied it three times.
 - The URI regexes compile once in `New`. An invalid regex is a configuration error: the middleware fails to load, and every router that uses it returns an error. v0.1.0 logged the error on every request and matched nothing.
-- A body read error returns `400` and stops. v0.1.0 wrote `500` and still forwarded the request.
+- A body read error (the client stopped mid-upload) sets `X-OpenAI-Parse-Failure: read error` and forwards the bytes that arrived, so the gateway rejects the request through its normal path. Traefik writes no response. v0.1.0 wrote a `500` and then still forwarded the request.
 - An empty regex matches nothing. v0.1.0 matched every request.
