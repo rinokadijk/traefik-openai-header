@@ -25,7 +25,7 @@ maxInFlightBytes: 2147483648
 ## Request body cap (`maxBodyBytes`)
 
 The plugin must buffer the request body to read `model` and the other fields.
-`maxBodyBytes` caps that buffer. The default is 67108864 (64 MiB). `0` means unlimited.
+`maxBodyBytes` caps that buffer. The default is `0`: no cap, the v0.1.0 behaviour. Set it to enable the cap (for example 67108864 for 64 MiB).
 
 - If `Content-Length` is above the cap, the plugin rejects the request before it reads any body byte.
 - If the body is chunked, the plugin stops reading one byte past the cap and rejects the request.
@@ -58,8 +58,7 @@ charged while they grow, so a 2 GiB budget needs about 4 GiB of headroom.
 
 ## Changes from v0.1.0
 
-- **Behaviour change:** the default `maxBodyBytes` is 64 MiB. A deployment that does not set it now returns `413` for larger bodies. Set `maxBodyBytes: 0` to keep the v0.1.0 behaviour.
-- New optional `maxInFlightBytes` budget (off by default).
+- New optional `maxBodyBytes` cap and `maxInFlightBytes` budget. Both are off by default, so a v0.1.0 configuration behaves as before.
 - The body is read once, into one buffer, bounded by `maxBodyBytes`. v0.1.0 copied it three times.
 - The URI regexes compile once in `New`. An invalid regex is a configuration error: the middleware fails to load, and every router that uses it returns an error. v0.1.0 logged the error on every request and matched nothing.
 - A body read error (the client stopped mid-upload) sets `X-OpenAI-Parse-Failure: read error` and forwards the bytes that arrived, so the gateway rejects the request through its normal path. Traefik writes no response. v0.1.0 wrote a `500` and then still forwarded the request.

@@ -378,9 +378,26 @@ func TestDefaultCap_LargeImagePartUnderCapSetsModel(t *testing.T) {
 	}
 }
 
-func TestDefaultCap_BodyAboveDefaultIs413(t *testing.T) {
+func TestDefaultConfig_HasNoCapForBackwardCompatibility(t *testing.T) {
+	// A v0.1.0 configuration (no maxBodyBytes) must keep forwarding bodies of any size.
 	next := &nextRecorder{}
 	h := newHandler(t, defaultConfig(), next)
+	body := bodyWithImage("gpt-4.1", 65<<20)
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, postJSON("/v1/chat/completions", bytes.NewReader(body)))
+
+	if rec.Code != http.StatusOK || !next.called {
+		t.Fatalf("status = %d, next called = %v; want 200 and next called", rec.Code, next.called)
+	}
+	if next.header.Get("X-OpenAI-Model") != "gpt-4.1" {
+		t.Errorf("X-OpenAI-Model = %q, want gpt-4.1", next.header.Get("X-OpenAI-Model"))
+	}
+}
+
+func TestExplicitCap_BodyAboveCapIs413(t *testing.T) {
+	next := &nextRecorder{}
+	h := newHandler(t, cappedConfig(64<<20), next)
 	body := bodyWithImage("gpt-4.1", 64<<20) // 64 MiB of image plus JSON framing > 64 MiB
 	rec := httptest.NewRecorder()
 

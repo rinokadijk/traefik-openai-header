@@ -15,8 +15,9 @@ import (
 const ParseFailureHeader = "X-OpenAI-Parse-Failure"
 const UserAgentHeader = "X-OpenAI-User-Agent"
 
-// DefaultMaxBodyBytes is the default request body cap: 64 MiB.
-const DefaultMaxBodyBytes int64 = 64 << 20
+// DefaultMaxBodyBytes is the default request body cap. 0 keeps the v0.1.0 behaviour: no cap.
+// Set maxBodyBytes in the middleware config to enable the cap.
+const DefaultMaxBodyBytes int64 = 0
 
 // Config the plugin configuration.
 type Config struct {
@@ -24,7 +25,7 @@ type Config struct {
 	RequestURIRegex        string                 `json:"requestUriRegex"`
 	ChatCompletionUriRegex string                 `json:"chatCompletionUriRegex"`
 	BatchUriRegex          string                 `json:"batchUriRegex"`
-	// MaxBodyBytes caps the request body the plugin buffers. Bodies above it get a 413. 0 = unlimited.
+	// MaxBodyBytes caps the request body the plugin buffers. Bodies above it get a 413. 0 (default) = unlimited.
 	MaxBodyBytes int64 `json:"maxBodyBytes"`
 	// MaxInFlightBytes caps the total body bytes this middleware instance holds at one time.
 	// A request that would push the total above it gets a 503 with Retry-After. 0 = no budget.
