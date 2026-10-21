@@ -41,8 +41,9 @@ declared `Content-Length` alone. A client that sends headers and then stalls hol
 
 ## In-flight budget (`maxInFlightBytes`)
 
-`maxInFlightBytes` caps the total body bytes one middleware instance holds at the same time,
-summed over all requests in flight. Default `0` = no budget. When a request would push the total
+`maxInFlightBytes` caps the total body bytes one middleware holds at the same time, summed over
+all requests in flight. Traefik builds one handler per router; handlers that share a middleware
+name share one counter, so the value is per middleware per Traefik process, not per router. Default `0` = no budget. When a request would push the total
 above the budget, the plugin returns `503 Service Unavailable` with `Retry-After: 1` and:
 
 ```json

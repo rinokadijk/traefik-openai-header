@@ -44,7 +44,7 @@ func cappedConfig(limit int64) *Config {
 
 func newHandler(t *testing.T, cfg *Config, next http.Handler) http.Handler {
 	t.Helper()
-	h, err := New(context.Background(), next, cfg, "test")
+	h, err := New(context.Background(), next, cfg, t.Name()) // unique name: budgets are shared per middleware name
 	if err != nil {
 		t.Fatalf("New returned error: %v", err)
 	}
@@ -567,5 +567,40 @@ func TestReadError_ReleasesNothingExtraFromBudget(t *testing.T) {
 	}
 	if got := h.(*Handler).inFlightBytes(); got != 0 {
 		t.Errorf("in-flight bytes after the request = %d, want 0", got)
+	}
+}
+
+func TestInFlightBudget_SharedAcrossHandlersWithSameName(t *testing.T) {
+	// Traefik builds one handler per router. Routers that reference the same Middleware
+	// must share one budget, or the configured value is per router instead of per pod.
+	cfg := cappedConfig(4096)
+	cfg.MaxInFlightBytes = 1000
+	hold := make(chan struct{})
+	entered := make(chan struct{}, 8)
+	blocking := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		entered <- struct{}{}
+		<-hold
+		w.WriteHeader(http.StatusOK)
+	})
+	name := t.Name() + "@kubernetescrd"
+	routerA, err := New(context.Background(), blocking, cfg, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	routerB, err := New(context.Background(), &nextRecorder{}, cfg, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := bytes.Repeat([]byte("x"), 600)
+
+	go routerA.ServeHTTP(httptest.NewRecorder(), postJSON("/v1/chat/completions", bytes.NewReader(body)))
+	<-entered
+
+	rec := httptest.NewRecorder()
+	routerB.ServeHTTP(rec, postJSON("/v1/chat/completions", bytes.NewReader(body)))
+	close(hold)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("second router: status = %d, want 503 (budget must be shared across routers with the same middleware name)", rec.Code)
 	}
 }
