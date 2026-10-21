@@ -4,6 +4,7 @@ type: middleware
 import: github.com/rinokadijk/traefik-openai-header
 
 testData:
+  maxBodyBytes: 67108864
   chatCompletionUriRegex: /v1/chat/completions
   batchUriRegex: /v1/batches
   requestFields:

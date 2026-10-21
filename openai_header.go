@@ -14,12 +14,17 @@ import (
 const ParseFailureHeader = "X-OpenAI-Parse-Failure"
 const UserAgentHeader = "X-OpenAI-User-Agent"
 
+// DefaultMaxBodyBytes is the default request body cap: 64 MiB.
+const DefaultMaxBodyBytes int64 = 64 << 20
+
 // Config the plugin configuration.
 type Config struct {
 	RequestFields          map[string]interface{} `json:"requestFields"`
 	RequestURIRegex        string                 `json:"requestUriRegex"`
 	ChatCompletionUriRegex string                 `json:"chatCompletionUriRegex"`
 	BatchUriRegex          string                 `json:"batchUriRegex"`
+	// MaxBodyBytes caps the request body the plugin buffers. Bodies above it get a 413. 0 = unlimited.
+	MaxBodyBytes int64 `json:"maxBodyBytes"`
 }
 
 // CreateConfig creates the default plugin configuration.
@@ -44,16 +49,30 @@ func CreateConfig() *Config {
 		RequestURIRegex:        "/v1/chat/completions",
 		ChatCompletionUriRegex: "/v1/chat/completions",
 		BatchUriRegex:          "/v1/batches",
+		MaxBodyBytes:           DefaultMaxBodyBytes,
 	}
 }
 
 // Handler contains the config for the plugin
 type Handler struct {
-	name                 string
-	next                 http.Handler
-	requestFields        map[string]interface{}
-	requestURIRegex      string
-	batchRequestURIRegex string
+	name          string
+	next          http.Handler
+	requestFields map[string]interface{}
+	chatRegex     *regexp.Regexp
+	batchRegex    *regexp.Regexp
+	maxBodyBytes  int64
+}
+
+// compileOrNil compiles expr once. An empty expr matches nothing.
+func compileOrNil(expr string) (*regexp.Regexp, error) {
+	if expr == "" {
+		return nil, nil
+	}
+	return regexp.Compile(expr)
+}
+
+func matches(re *regexp.Regexp, s string) bool {
+	return re != nil && re.MatchString(s)
 }
 
 // New Creates a new HTTP Handler to translate the openai model into headers
@@ -69,12 +88,25 @@ func New(_ context.Context, next http.Handler, config *Config, name string) (htt
 		chatCompletionUri = config.ChatCompletionUriRegex
 	}
 
+	chatRegex, err := compileOrNil(chatCompletionUri)
+	if err != nil {
+		return nil, fmt.Errorf("%s: invalid requestUriRegex %q: %w", name, chatCompletionUri, err)
+	}
+	batchRegex, err := compileOrNil(config.BatchUriRegex)
+	if err != nil {
+		return nil, fmt.Errorf("%s: invalid batchUriRegex %q: %w", name, config.BatchUriRegex, err)
+	}
+	if config.MaxBodyBytes < 0 {
+		return nil, fmt.Errorf("%s: maxBodyBytes must be 0 or greater, got %d", name, config.MaxBodyBytes)
+	}
+
 	return &Handler{
-		name:                 name,
-		requestFields:        config.RequestFields,
-		requestURIRegex:      chatCompletionUri,
-		batchRequestURIRegex: config.BatchUriRegex,
-		next:                 next,
+		name:          name,
+		requestFields: config.RequestFields,
+		chatRegex:     chatRegex,
+		batchRegex:    batchRegex,
+		maxBodyBytes:  config.MaxBodyBytes,
+		next:          next,
 	}, nil
 }
 
@@ -109,7 +141,6 @@ type webSearchOptions struct {
 
 type chatCompletionRequest struct {
 	Model               string            `json:"model"`
-	Messages            json.RawMessage   `json:"messages,omitempty"`
 	Audio               audio             `json:"audio,omitempty"`
 	FrequencyPenalty    *float32          `json:"frequency_penalty,omitempty"`
 	MaxCompletionTokens *float32          `json:"max_completion_tokens,omitempty"`
@@ -143,45 +174,101 @@ type batchRequest struct {
 }
 
 func (e *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	isChatCompletionRequest, err := regexp.MatchString(e.requestURIRegex, r.RequestURI)
-	if err != nil {
-		fmt.Println("Error while matching RequestURI", err.Error())
+	isChatCompletionRequest := matches(e.chatRegex, r.RequestURI)
+	isBatchRequest := matches(e.batchRegex, r.RequestURI)
+
+	if (!isChatCompletionRequest && !isBatchRequest) || r.Method != http.MethodPost {
+		e.next.ServeHTTP(w, r)
+		return
 	}
 
-	isBatchRequest, err := regexp.MatchString(e.batchRequestURIRegex, r.RequestURI)
-	if err != nil {
-		fmt.Println("Error while matching BatchRequestURI", err.Error())
+	data, ok := e.readBody(w, r)
+	if !ok {
+		// readBody wrote the error response. Never forward the request after that.
+		return
 	}
 
-	if (isChatCompletionRequest || isBatchRequest) && r.Method == "POST" {
-		var body bytes.Buffer
-		tee := io.TeeReader(r.Body, &body)
-
-		data, err := io.ReadAll(tee)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
-
-		if len(data) < 1 {
-			r.Header.Set(ParseFailureHeader, "empty body")
-		}
-
-		if len(data) > 0 && len(e.requestFields) > 0 && isChatCompletionRequest {
-			e.handleChatCompletionRequest(data, r)
-		}
-
-		if len(data) > 0 && len(e.requestFields) > 0 && isBatchRequest {
-			e.handleBatchRequest(data, r)
-		}
-
-		if len(r.Header.Get("User-Agent")) > 0 {
-			r.Header.Set(UserAgentHeader, r.Header.Get("User-Agent"))
-		}
-
-		r.Body = io.NopCloser(bytes.NewReader(data))
+	if len(data) < 1 {
+		r.Header.Set(ParseFailureHeader, "empty body")
 	}
+
+	if len(data) > 0 && len(e.requestFields) > 0 && isChatCompletionRequest {
+		e.handleChatCompletionRequest(data, r)
+	}
+
+	if len(data) > 0 && len(e.requestFields) > 0 && isBatchRequest {
+		e.handleBatchRequest(data, r)
+	}
+
+	if len(r.Header.Get("User-Agent")) > 0 {
+		r.Header.Set(UserAgentHeader, r.Header.Get("User-Agent"))
+	}
+
+	r.Body = io.NopCloser(bytes.NewReader(data))
+	r.ContentLength = int64(len(data))
 
 	e.next.ServeHTTP(w, r)
+}
+
+// readBody reads the request body once into memory, bounded by maxBodyBytes.
+// It returns false after it has written an error response.
+func (e *Handler) readBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
+	limit := e.maxBodyBytes
+	if limit > 0 && r.ContentLength > limit {
+		// The client declared the size. Reject before reading a single body byte.
+		e.rejectTooLarge(w, r)
+		return nil, false
+	}
+
+	var src io.Reader = r.Body
+	if limit > 0 {
+		// One byte past the cap is enough to prove the body is too large.
+		src = io.LimitReader(r.Body, limit+1)
+	}
+
+	var buf bytes.Buffer
+	if r.ContentLength > 0 {
+		// Pre-size so the buffer does not grow by doubling.
+		buf.Grow(int(r.ContentLength) + bytes.MinRead)
+	}
+	if _, err := buf.ReadFrom(src); err != nil {
+		r.Header.Set(ParseFailureHeader, "read error")
+		writeError(w, http.StatusBadRequest, "failed to read request body: "+err.Error(), "invalid_request_body")
+		return nil, false
+	}
+
+	if limit > 0 && int64(buf.Len()) > limit {
+		e.rejectTooLarge(w, r)
+		return nil, false
+	}
+
+	return buf.Bytes(), true
+}
+
+func (e *Handler) rejectTooLarge(w http.ResponseWriter, r *http.Request) {
+	// The parse-failure header feeds the Traefik "parsefailure" metric label.
+	r.Header.Set(ParseFailureHeader, "request_too_large")
+	writeError(w, http.StatusRequestEntityTooLarge,
+		fmt.Sprintf("request body exceeds the maximum of %d bytes", e.maxBodyBytes), "request_too_large")
+}
+
+// writeError writes an OpenAI-style error envelope.
+func writeError(w http.ResponseWriter, status int, message string, code string) {
+	body, err := json.Marshal(map[string]interface{}{
+		"error": map[string]string{
+			"message": message,
+			"type":    "invalid_request_error",
+			"code":    code,
+		},
+	})
+	if err != nil {
+		body = []byte(`{"error":{"message":"request rejected","type":"invalid_request_error"}}`)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	// Ask the server to close the connection so an unread upload does not stall the socket.
+	w.Header().Set("Connection", "close")
+	w.WriteHeader(status)
+	_, _ = w.Write(body)
 }
 
 func (e *Handler) handleChatCompletionRequest(data []byte, r *http.Request) {
