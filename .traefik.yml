@@ -5,6 +5,7 @@ import: github.com/rinokadijk/traefik-openai-header
 
 testData:
   maxBodyBytes: 67108864
+  maxInFlightBytes: 2147483648
   chatCompletionUriRegex: /v1/chat/completions
   batchUriRegex: /v1/batches
   requestFields:

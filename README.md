@@ -18,8 +18,8 @@ requestFields:
   stream: X-OpenAI-Stream
   completion_window: X-OpenAI-Completion-Window
   oai_endpoint: X-OpenAI-Endpoint
-```
 maxBodyBytes: 67108864
+maxInFlightBytes: 2147483648
 ```
 
 ## Request body cap (`maxBodyBytes`)
@@ -38,9 +38,29 @@ The plugin must buffer the request body to read `model` and the other fields.
 The plugin also sets `X-OpenAI-Parse-Failure: request_too_large` on the request, so a
 Traefik `headerlabels` metric label on that header shows rejected requests.
 
+The buffer grows with the bytes that arrive (64 KiB at first, then doubling), never from the
+declared `Content-Length` alone. A client that sends headers and then stalls holds at most 64 KiB.
+
+## In-flight budget (`maxInFlightBytes`)
+
+`maxInFlightBytes` caps the total body bytes one middleware instance holds at the same time,
+summed over all requests in flight. Default `0` = no budget. When a request would push the total
+above the budget, the plugin returns `503 Service Unavailable` with `Retry-After: 1` and:
+
+```json
+{"error":{"message":"too many request body bytes in flight on this gateway, retry shortly","type":"server_error","code":"request_body_budget_exceeded"}}
+```
+
+It sets `X-OpenAI-Parse-Failure: request_body_budget_exceeded` on the request. Bytes are charged
+as they arrive and released as soon as the upstream has read the body to EOF, or when the request
+ends. Size the budget from the container memory limit: buffers can retain up to 2x the bytes
+charged while they grow, so a 2 GiB budget needs about 4 GiB of headroom.
+
 ## Changes from v0.1.0
 
+- **Behaviour change:** the default `maxBodyBytes` is 64 MiB. A deployment that does not set it now returns `413` for larger bodies. Set `maxBodyBytes: 0` to keep the v0.1.0 behaviour.
+- New optional `maxInFlightBytes` budget (off by default).
 - The body is read once, into one buffer, bounded by `maxBodyBytes`. v0.1.0 copied it three times.
-- The URI regexes compile once in `New`. An invalid regex is a configuration error.
+- The URI regexes compile once in `New`. An invalid regex is a configuration error: the middleware fails to load, and every router that uses it returns an error. v0.1.0 logged the error on every request and matched nothing.
 - A body read error returns `400` and stops. v0.1.0 wrote `500` and still forwarded the request.
 - An empty regex matches nothing. v0.1.0 matched every request.

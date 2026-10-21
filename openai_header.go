@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"sync/atomic"
 )
 
 const ParseFailureHeader = "X-OpenAI-Parse-Failure"
@@ -25,6 +26,9 @@ type Config struct {
 	BatchUriRegex          string                 `json:"batchUriRegex"`
 	// MaxBodyBytes caps the request body the plugin buffers. Bodies above it get a 413. 0 = unlimited.
 	MaxBodyBytes int64 `json:"maxBodyBytes"`
+	// MaxInFlightBytes caps the total body bytes this middleware instance holds at one time.
+	// A request that would push the total above it gets a 503 with Retry-After. 0 = no budget.
+	MaxInFlightBytes int64 `json:"maxInFlightBytes"`
 }
 
 // CreateConfig creates the default plugin configuration.
@@ -55,12 +59,37 @@ func CreateConfig() *Config {
 
 // Handler contains the config for the plugin
 type Handler struct {
-	name          string
-	next          http.Handler
-	requestFields map[string]interface{}
-	chatRegex     *regexp.Regexp
-	batchRegex    *regexp.Regexp
-	maxBodyBytes  int64
+	inFlight         int64 // first field: 64-bit aligned for sync/atomic on 32-bit platforms
+	name             string
+	next             http.Handler
+	requestFields    map[string]interface{}
+	chatRegex        *regexp.Regexp
+	batchRegex       *regexp.Regexp
+	maxBodyBytes     int64
+	maxInFlightBytes int64
+}
+
+// acquire reserves n body bytes against the in-flight budget. It returns false when the budget is full.
+func (e *Handler) acquire(n int64) bool {
+	if e.maxInFlightBytes <= 0 {
+		return true
+	}
+	if atomic.AddInt64(&e.inFlight, n) > e.maxInFlightBytes {
+		atomic.AddInt64(&e.inFlight, -n)
+		return false
+	}
+	return true
+}
+
+func (e *Handler) release(n int64) {
+	if e.maxInFlightBytes <= 0 || n == 0 {
+		return
+	}
+	atomic.AddInt64(&e.inFlight, -n)
+}
+
+func (e *Handler) inFlightBytes() int64 {
+	return atomic.LoadInt64(&e.inFlight)
 }
 
 // compileOrNil compiles expr once. An empty expr matches nothing.
@@ -99,14 +128,18 @@ func New(_ context.Context, next http.Handler, config *Config, name string) (htt
 	if config.MaxBodyBytes < 0 {
 		return nil, fmt.Errorf("%s: maxBodyBytes must be 0 or greater, got %d", name, config.MaxBodyBytes)
 	}
+	if config.MaxInFlightBytes < 0 {
+		return nil, fmt.Errorf("%s: maxInFlightBytes must be 0 or greater, got %d", name, config.MaxInFlightBytes)
+	}
 
 	return &Handler{
-		name:          name,
-		requestFields: config.RequestFields,
-		chatRegex:     chatRegex,
-		batchRegex:    batchRegex,
-		maxBodyBytes:  config.MaxBodyBytes,
-		next:          next,
+		name:             name,
+		requestFields:    config.RequestFields,
+		chatRegex:        chatRegex,
+		batchRegex:       batchRegex,
+		maxBodyBytes:     config.MaxBodyBytes,
+		maxInFlightBytes: config.MaxInFlightBytes,
+		next:             next,
 	}, nil
 }
 
@@ -182,11 +215,15 @@ func (e *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data, ok := e.readBody(w, r)
+	data, held, ok := e.readBody(w, r)
 	if !ok {
 		// readBody wrote the error response. Never forward the request after that.
 		return
 	}
+	body := &bufferedBody{handler: e, data: data, reader: bytes.NewReader(data), held: held}
+	// Release the budget and drop the buffer as soon as upstream has drained the body,
+	// or at the latest when the request ends.
+	defer body.free()
 
 	if len(data) < 1 {
 		r.Header.Set(ParseFailureHeader, "empty body")
@@ -204,20 +241,28 @@ func (e *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		r.Header.Set(UserAgentHeader, r.Header.Get("User-Agent"))
 	}
 
-	r.Body = io.NopCloser(bytes.NewReader(data))
+	r.Body = body
 	r.ContentLength = int64(len(data))
 
 	e.next.ServeHTTP(w, r)
 }
 
-// readBody reads the request body once into memory, bounded by maxBodyBytes.
-// It returns false after it has written an error response.
-func (e *Handler) readBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
+const (
+	// initialBufferBytes bounds how much the buffer is pre-sized from the declared Content-Length.
+	// A client must not reserve memory with a header alone, so growth follows the bytes that arrive.
+	initialBufferBytes = 64 << 10
+	// readSlabBytes is the unit in which bytes are read and charged against the in-flight budget.
+	readSlabBytes = 4 << 20
+)
+
+// readBody reads the request body once into memory, bounded by maxBodyBytes and the in-flight budget.
+// It returns the data, the bytes charged to the budget, and false after it has written an error response.
+func (e *Handler) readBody(w http.ResponseWriter, r *http.Request) ([]byte, int64, bool) {
 	limit := e.maxBodyBytes
 	if limit > 0 && r.ContentLength > limit {
 		// The client declared the size. Reject before reading a single body byte.
 		e.rejectTooLarge(w, r)
-		return nil, false
+		return nil, 0, false
 	}
 
 	var src io.Reader = r.Body
@@ -227,48 +272,115 @@ func (e *Handler) readBody(w http.ResponseWriter, r *http.Request) ([]byte, bool
 	}
 
 	var buf bytes.Buffer
-	if r.ContentLength > 0 {
-		// Pre-size so the buffer does not grow by doubling.
-		buf.Grow(int(r.ContentLength) + bytes.MinRead)
+	initial := int64(initialBufferBytes)
+	if r.ContentLength > 0 && r.ContentLength+bytes.MinRead < initial {
+		initial = r.ContentLength + bytes.MinRead
 	}
-	if _, err := buf.ReadFrom(src); err != nil {
-		r.Header.Set(ParseFailureHeader, "read error")
-		writeError(w, http.StatusBadRequest, "failed to read request body: "+err.Error(), "invalid_request_body")
-		return nil, false
+	buf.Grow(int(initial))
+
+	var held int64
+	for {
+		n, err := buf.ReadFrom(io.LimitReader(src, readSlabBytes))
+		if n > 0 {
+			if !e.acquire(n) {
+				e.release(held)
+				e.rejectBudgetExceeded(w, r)
+				return nil, 0, false
+			}
+			held += n
+		}
+		if err != nil {
+			e.release(held)
+			r.Header.Set(ParseFailureHeader, "read error")
+			fmt.Println("Unable to read request body", err.Error())
+			writeError(w, r, http.StatusBadRequest, "failed to read request body", "invalid_request_error", "invalid_request_body")
+			return nil, 0, false
+		}
+		if n < readSlabBytes {
+			// The body ended inside this slab.
+			break
+		}
 	}
 
 	if limit > 0 && int64(buf.Len()) > limit {
+		e.release(held)
 		e.rejectTooLarge(w, r)
-		return nil, false
+		return nil, 0, false
 	}
 
-	return buf.Bytes(), true
+	return buf.Bytes(), held, true
 }
 
 func (e *Handler) rejectTooLarge(w http.ResponseWriter, r *http.Request) {
 	// The parse-failure header feeds the Traefik "parsefailure" metric label.
 	r.Header.Set(ParseFailureHeader, "request_too_large")
-	writeError(w, http.StatusRequestEntityTooLarge,
-		fmt.Sprintf("request body exceeds the maximum of %d bytes", e.maxBodyBytes), "request_too_large")
+	writeError(w, r, http.StatusRequestEntityTooLarge,
+		fmt.Sprintf("request body exceeds the maximum of %d bytes", e.maxBodyBytes), "invalid_request_error", "request_too_large")
+}
+
+func (e *Handler) rejectBudgetExceeded(w http.ResponseWriter, r *http.Request) {
+	r.Header.Set(ParseFailureHeader, "request_body_budget_exceeded")
+	w.Header().Set("Retry-After", "1")
+	writeError(w, r, http.StatusServiceUnavailable,
+		"too many request body bytes in flight on this gateway, retry shortly", "server_error", "request_body_budget_exceeded")
 }
 
 // writeError writes an OpenAI-style error envelope.
-func writeError(w http.ResponseWriter, status int, message string, code string) {
+func writeError(w http.ResponseWriter, r *http.Request, status int, message string, errType string, code string) {
 	body, err := json.Marshal(map[string]interface{}{
 		"error": map[string]string{
 			"message": message,
-			"type":    "invalid_request_error",
+			"type":    errType,
 			"code":    code,
 		},
 	})
 	if err != nil {
-		body = []byte(`{"error":{"message":"request rejected","type":"invalid_request_error"}}`)
+		body = []byte(`{"error":{"message":"request rejected","type":"server_error"}}`)
 	}
 	w.Header().Set("Content-Type", "application/json")
-	// Ask the server to close the connection so an unread upload does not stall the socket.
-	w.Header().Set("Connection", "close")
+	if r.ProtoMajor == 1 {
+		// HTTP/1: close the connection so an unread upload does not stall the socket.
+		// On HTTP/2 Go would turn this header into a GOAWAY for every stream on the connection.
+		w.Header().Set("Connection", "close")
+	}
 	w.WriteHeader(status)
 	_, _ = w.Write(body)
+}
+
+// bufferedBody serves the buffered request body downstream. Once upstream has read it to EOF,
+// or the request ends, it releases the in-flight budget and drops the buffer so the GC can free it.
+type bufferedBody struct {
+	handler  *Handler
+	data     []byte
+	reader   *bytes.Reader
+	held     int64
+	released bool
+}
+
+func (b *bufferedBody) Read(p []byte) (int, error) {
+	if b.reader == nil {
+		return 0, io.EOF
+	}
+	n, err := b.reader.Read(p)
+	if err == io.EOF {
+		b.free()
+	}
+	return n, err
+}
+
+func (b *bufferedBody) Close() error {
+	b.free()
+	return nil
+}
+
+func (b *bufferedBody) free() {
+	if b.released {
+		return
+	}
+	b.released = true
+	b.handler.release(b.held)
+	b.reader = nil
+	b.data = nil
 }
 
 func (e *Handler) handleChatCompletionRequest(data []byte, r *http.Request) {
