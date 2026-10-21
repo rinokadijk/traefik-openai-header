@@ -1,8 +1,6 @@
 # Traefik OpenAI Header
 This is a middleware plugin gets openai request metadata as headers.
 
-Forked from [rinokadijk/traefik-openai-header](https://github.com/rinokadijk/traefik-openai-header) v0.1.0 (Apache-2.0).
-
 ## Config
 ```yaml
 chatCompletionUriRegex: /v1/chat/completions
